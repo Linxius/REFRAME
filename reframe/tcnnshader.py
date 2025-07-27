@@ -68,7 +68,7 @@ class tcnnshader(nn.Module):
         diffuse_color = h[:,:3]
         wr_pe = self.pe_encoder(wr).float()
         if self.opt.region==1:
-            env_feature = self.env_encoder(wr_pe)
+            env_feature = self.env_learner(wr_pe)
         else:
             env_feature = torch.zeros(x.shape[0],3).cuda()
             indices = []
@@ -92,7 +92,7 @@ class tcnnshader(nn.Module):
         wr = 2*ndir*normal-d
         h = self.hashmapping(x)
         diffuse_color = h[:,:3]
-        degree_xy,degree_z = dir2polar(wr)
+        degree_xy,degree_z = dir2polar(wr,self.opt.wenvlearner)
         nordegree = torch.cat([degree_xy.unsqueeze(-1),degree_z.unsqueeze(-1)],1).double()
 
         env_feature = torch.nn.functional.grid_sample(envmap.double().permute(2, 1, 0).unsqueeze(0), nordegree.double().view(1, -1, 1, 2)  , mode='bilinear',padding_mode='border',align_corners=None)  

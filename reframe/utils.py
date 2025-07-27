@@ -64,22 +64,32 @@ def bakeenvmap(rx,ry,shader):
     coordinates = coordinates.reshape(-1,2)
     dir = cor2dir(coordinates)
     dir_pe = shader.pe_encoder(dir).float()  
-    envmap = shader.dir_encoder(dir_pe)
+    envmap = shader.env_learner(dir_pe)
     return envmap.reshape(rx,ry,3)
 
-def dir2polar(dir):
+def dir2polar(dir,wenvlearner):
     r =   torch.norm(dir, dim=-1)  
     r_xy = torch.norm(dir[:,:2], dim=-1)
-    
-    radian_xy = torch.acos(dir[:,-1]/r)
-    degree_xy = torch.rad2deg(radian_xy)-90
+    if wenvlearner:
+        radian_xy = torch.acos(dir[:,-1]/r)
+        degree_xy = torch.rad2deg(radian_xy)-90
 
-    radian_z = torch.acos(dir[:,0]/(r_xy+1e-20))
-    degree_z = torch.rad2deg(radian_z)
+        radian_z = torch.acos(dir[:,0]/(r_xy+1e-20))
+        degree_z = torch.rad2deg(radian_z)
 
-    tem = (dir[:,1]<0)
-    degree_z[tem] = -1*degree_z[tem]
-    return degree_xy/90.0,degree_z/180.0
+        tem = (dir[:,1]<0)
+        degree_z[tem] = -1*degree_z[tem]
+        degree_xy = degree_xy/90.0
+        degree_z = degree_z/180.0
+    #We find acos will likely lead to grad NAN. So we skip it when directly envmap optimizing. 
+    else:
+        radian_xy = dir[:,-1]/(r+1e-6)
+        radian_z = ((dir[:,0]/(r_xy+1e-6))+1)/2
+        tem = (dir[:,1]<0)
+        radian_z[tem] = -1*radian_z[tem]
+        degree_xy = radian_xy
+        degree_z = radian_z
+    return degree_xy,degree_z
 
 #Reference to NeRF2Mesh.
 def scale_img_nhwc(x, size, mag='bilinear', min='bilinear'):
@@ -199,7 +209,7 @@ def uvmapping(mesh,opt,shader):
         normal_our = feats_normal
     feats_diffuse=fe_our[...,:3]
 
-    experiment_dir = opt.output_dir / opt.run_name
+    experiment_dir = opt.outputdir / opt.run_name
     shaders_save_path = experiment_dir / "shaders"
 
     feats_n=normal_our[...,:]##3

@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader
 import collections
 import struct
 
+Point3D = collections.namedtuple(
+    "Point3D", ["id", "xyz", "rgb", "error", "image_ids", "point2D_idxs"])
 CameraModel = collections.namedtuple(
     "CameraModel", ["model_id", "model_name", "num_params"])
 Camera = collections.namedtuple(
@@ -110,6 +112,55 @@ def rotmat(a, b):
 	kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
 	return np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2 + 1e-10))
 
+def read_points3d_binary(path_to_model_file):
+    points3D = {}
+    with open(path_to_model_file, "rb") as fid:
+        num_points = read_next_bytes(fid, 8, "Q")[0]
+        for point_line_index in range(num_points):
+            binary_point_line_properties = read_next_bytes(
+                fid, num_bytes=43, format_char_sequence="QdddBBBd")
+            point3D_id = binary_point_line_properties[0]
+            xyz = np.array(binary_point_line_properties[1:4])
+            rgb = np.array(binary_point_line_properties[4:7])
+            error = np.array(binary_point_line_properties[7])
+            track_length = read_next_bytes(
+                fid, num_bytes=8, format_char_sequence="Q")[0]
+            track_elems = read_next_bytes(
+                fid, num_bytes=8*track_length,
+                format_char_sequence="ii"*track_length)
+            image_ids = np.array(tuple(map(int, track_elems[0::2])))
+            point2D_idxs = np.array(tuple(map(int, track_elems[1::2])))
+            points3D[point3D_id] = Point3D(
+                id=point3D_id, xyz=xyz, rgb=rgb,
+                error=error, image_ids=image_ids,
+                point2D_idxs=point2D_idxs)
+    return points3D
+
+def center_poses(poses, pts3d=None, enable_cam_center=False):
+    
+    def normalize(v):
+        return v / (np.linalg.norm(v) + 1e-10)
+
+    if pts3d is None or enable_cam_center:
+        center = poses[:, :3, 3].mean(0)
+    else:
+        center = pts3d.mean(0)
+        
+    
+    up = normalize(poses[:, :3, 1].mean(0)) # (3)
+    R = rotmat(up, [0, 0, 1])
+    R = np.pad(R, [0, 1])
+    R[-1, -1] = 1
+    
+    poses[:, :3, 3] -= center
+    poses_centered = R @ poses # (N_images, 4, 4)
+
+    if pts3d is not None:
+        pts3d_centered = (pts3d - center) @ R[:3, :3].T
+        # pts3d_centered = pts3d @ R[:3, :3].T - center
+        return poses_centered, pts3d_centered
+
+    return poses_centered
 
 class ColmapDataset:
     def __init__(self, opt, device, type='train'):
@@ -188,15 +239,22 @@ class ColmapDataset:
             P[:3, :3] = imdata[k].qvec2rotmat()
             P[:3, 3] = imdata[k].tvec
             poses.append(P)
-
-        self.poses = np.linalg.inv(np.stack(poses, axis=0)) 
+        poses = np.linalg.inv(np.stack(poses, axis=0)) # [N, 4, 4]
+ 
+        # read sparse points
+        ptsdata = read_points3d_binary(os.path.join(self.colmap_path, "points3D.bin"))
+        ptskeys = np.array(sorted(ptsdata.keys()))
+        pts3d = np.array([ptsdata[k].xyz for k in ptskeys]) # [M, 3]
+        
+        self.poses, self.pts3d = center_poses(poses, pts3d)
+        
         self.poses[:, :3, 1:3] *= -1
         self.poses = self.poses[:, [1, 0, 2, 3], :]
         self.poses[:, 2] *= -1
         self.poses[:, :3, 3] *= self.scale
 
- 
 
+       
 
         all_ids = np.arange(len(img_paths))
         val_ids = all_ids[::8]
@@ -261,35 +319,33 @@ class ColmapDataset:
 
     def collate(self, index):
         results = {'H': self.H, 'W': self.W}
-        if self.opt.rendermode != 'volume':
-            ourindex = []
-            images = []
-            mvps = []
-            camera_location = []
-            if self.training:                           
-                for _ in range(self.views_per_iter):
-                    view_index = self.index_buffer[self.current_index]
-                    ourindex.append(view_index)
-                    images.append(self.images[view_index])
-                    mvps.append(self.mvps[view_index])
-                    camera_location.append(self.poses[view_index][:3,3])
-                    
-                    self.current_index = (self.current_index + 1) 
-                    if self.current_index >= len(self.images):
-                        random.shuffle(self.index_buffer)
-                        self.current_index = 0
-        
-            else:
-                ourindex = index[0]
-                images.append(self.images[ourindex])
-                ourindex.append(ourindex)
-                mvps.append(self.mvps[ourindex])
-                camera_location.append(self.poses[ourindex][:3,3])
+        ourindex = []
+        images = []
+        mvps = []
+        camera_location = []
+        if self.training:                           
+            for _ in range(self.views_per_iter):
+                view_index = self.index_buffer[self.current_index]
+                ourindex.append(view_index)
+                images.append(self.images[view_index])
+                mvps.append(self.mvps[view_index])
+                camera_location.append(self.poses[view_index][:3,3])
                 
-            results['images'] = images
-            results['index'] = ourindex
-            results['mvp'] = mvps
-            results['camera_location'] = camera_location
+                self.current_index = (self.current_index + 1) 
+                if self.current_index >= len(self.images):
+                    random.shuffle(self.index_buffer)
+                    self.current_index = 0
+    
+        else:
+            images.append(self.images[index[0]])
+            ourindex.append(index[0])
+            mvps.append(self.mvps[index[0]])
+            camera_location.append(self.poses[index[0]][:3,3])
+            
+        results['images'] = images
+        results['index'] = ourindex
+        results['mvp'] = mvps
+        results['camera_location'] = camera_location
                         
         return results
     def dataloader(self):

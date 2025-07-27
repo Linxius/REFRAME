@@ -60,7 +60,7 @@ if __name__ == '__main__':
     parser.add_argument('--ssaa', type=int, default=2, help="Super sampling rate")
     parser.add_argument('--uvmap', type=int, default=0, help="Whether to perform uvmap")
     parser.add_argument('--views_per_iter', type=int, default=1, help="Number of views used per iteration.")
-    parser.add_argument('--refneus', type=int, default=1,help="Whether using refneus's mesh for initialization")
+    parser.add_argument('--refneus', type=int, default=0,help="Whether using refneus's mesh for initialization")
     parser.add_argument('--resolutionx', type=int, default=360,help="Resolution for environment feature map")
     parser.add_argument('--resolutiony', type=int, default=720,help="Resolution for environment feature map")
     parser.add_argument('--dataset',  type=str, default='blender',help="Dataset type")
