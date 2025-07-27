@@ -92,13 +92,13 @@ For more details on tiny-cuda-nn and nvdiffrast, you can visit [tiny-cuda-nn](ht
 3. Real Captured Dataset
 
 - You can download the Real Captured dataset from their [project page](https://dorverbin.github.io/refnerf/).
-- We use [NeRF2Mesh]((https://github.com/ashawkey/nerf2mesh))  and [Neuralangelo](https://github.com/NVlabs/neuralangelo) to obtain our initial mesh for the Real Captured dataset.
+- We use [NeRF2Mesh](https://github.com/ashawkey/nerf2mesh)  and [Neuralangelo](https://github.com/NVlabs/neuralangelo) to obtain our initial mesh for the Real Captured dataset.
 - Since the initial mesh of the Real Captured dataset in our paper is of poor quality and has large memory overhead. Therefore, we do not provide the initial mesh for the Real Captured dataset.
 
 4. Self Captured Dataset
 
 - Users can capture scenes on their own. We support both blender and colmap formats.
-- We recommend users to follow [NeRF2Mesh]((https://github.com/ashawkey/nerf2mesh)) to process their data for training.
+- We recommend users to follow [NeRF2Mesh](https://github.com/ashawkey/nerf2mesh) to process their data for training.
 
 
 
