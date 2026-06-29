@@ -9,6 +9,7 @@ class velearner(nn.Module):
         super().__init__()
         self.L = opt.L
         self.bound = bound
+        self.offset_scale = getattr(opt, 'geo_offset_scale', 0.05)
 
         F = 2;  N_min = 16
         if self.bound > 1:
@@ -41,6 +42,6 @@ class velearner(nn.Module):
         x = (x+self.bound)/(2*self.bound)
         h = self.xyz_encoder(x).float()
         veoffset = self.veoff_net(h)
-        veoffset = torch.tanh(veoffset)
-        
+        veoffset = torch.tanh(veoffset) * self.offset_scale
+
         return veoffset

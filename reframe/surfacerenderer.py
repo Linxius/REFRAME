@@ -67,7 +67,6 @@ class SurfaceRenderer:
             normal = normal.view(-1, 3)
             position = sample_fn(position[mask_flatten])      
             normal = sample_fn(normal[mask_flatten])
-            
 
             view_direction = (data['camera_location'][i] - position).cuda() #N*3
         
@@ -85,6 +84,7 @@ class SurfaceRenderer:
                 spe = self.spe.zero_()
                 normal_img = self.normal_img.zero_()
 
+            sum1 = torch.tensor(0.0, device=self.device)
             if shading:
                 if torch.is_tensor(envmap):
                     sum1,color,specular,diffuse = shader.envmapforward(position, normal, view_direction,envmap)
@@ -117,9 +117,10 @@ class SurfaceRenderer:
                 dif[mask_flatten] = diffuse
                 spe[mask_flatten] = specular
             else:
-                full[mask_flatten] = torch.cat(all_color,dim=0)
-                dif[mask_flatten] = torch.cat(all_diffuse,dim=0)
-                spe[mask_flatten] = torch.cat(all_specular,dim=0)
+                if mask_flatten.any():
+                    full[mask_flatten] = torch.cat(all_color,dim=0)
+                    dif[mask_flatten] = torch.cat(all_diffuse,dim=0)
+                    spe[mask_flatten] = torch.cat(all_specular,dim=0)
             normal_img[mask_flatten] = (normal+1)/2
             
             mask = mask.float()

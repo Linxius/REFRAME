@@ -10,6 +10,7 @@ class norlearner(nn.Module):
         super().__init__()
         self.L = opt.L
         self.bound = bound
+        self.offset_scale = getattr(opt, 'nor_offset_scale', 0.1)
 
         F = 2;  N_min = 16
         if self.bound > 1:
@@ -51,5 +52,5 @@ class norlearner(nn.Module):
         h = self.xyz_encoder(x).float()
         n =self.nor_encoder(n).float()
         offset = self.off_net(torch.cat([h,n], 1))        
-        offset = torch.tanh(offset)
+        offset = torch.tanh(offset) * self.offset_scale
         return offset

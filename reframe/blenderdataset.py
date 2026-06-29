@@ -47,15 +47,16 @@ class BlenderDataset:
             scale_mat = np.diag([radius, radius, radius, 1.0]).astype(np.float32)
             scale_mat[:3, 3] = center
             self.scale_mat = deepcopy(scale_mat)
-            self.scale_mat[0, 0] *= 150
-            self.scale_mat[1, 1] *= 150
-            self.scale_mat[2, 2] *= 150
-            self.scale_mat[:3, 3] *= 150
+            # self.scale_mat[0, 0] *= 150
+            # self.scale_mat[1, 1] *= 150
+            # self.scale_mat[2, 2] *= 150
+            # self.scale_mat[:3, 3] *= 150
         
         self.poses = []
         self.images = []
         self.camera_R = []
         self.camera_T = []
+        self.file_paths = []
 
         for f in tqdm.tqdm(frames, desc=f'Loading {type} data'):
             f_path = os.path.join(self.root_path, f['file_path'])
@@ -77,8 +78,8 @@ class BlenderDataset:
             new_rotation = rotation @ np.array([[1,0,0],
                                                 [0,-1,0],
                                                 [0,0,-1]])
-            
-            w2c_rotation = np.linalg.inv(new_rotation).astype(np.float32) 
+
+            w2c_rotation = np.linalg.inv(new_rotation).astype(np.float32)
             w2c_location = (w2c_rotation @ (- location)).astype(np.float32)
             
             image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
@@ -96,6 +97,7 @@ class BlenderDataset:
             self.images.append(image)
             self.camera_R.append(w2c_rotation)
             self.camera_T.append(w2c_location)
+            self.file_paths.append(f['file_path'])
         
         self.poses = torch.from_numpy(np.stack(self.poses, axis=0)).to(self.device) 
         self.camera_R = torch.from_numpy(np.stack(self.camera_R, axis=0)).to(self.device) 
@@ -147,7 +149,17 @@ class BlenderDataset:
         images = []
         mvps = []
         camera_location = []
-        if self.type=='train':
+
+        # When called with multiple explicit indices (e.g. for visualization),
+        # bypass mode logic and use them directly.
+        if self.type=='train' and len(index) > 1:
+            for i in index:
+                ourindex.append(i)
+                images.append(self.images[i])
+                mvps.append(self.mvps[i])
+                camera_location.append(self.poses[i][:3,3])
+
+        elif self.type=='train':
             if self.mode == 'random':
                 ourindex = np.random.choice(len(self.images), self.views_per_iter, replace=False)
                 for i in range(self.views_per_iter):
@@ -189,6 +201,7 @@ class BlenderDataset:
         results['index'] = ourindex
         results['mvp'] = mvps
         results['camera_location'] = camera_location
+        results['file_path'] = [self.file_paths[idx] for idx in ourindex]
 
         return results
 

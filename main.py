@@ -44,7 +44,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_frequency', type=int, default=250, help="Frequency of mesh and shader saving (in epoch)")
     parser.add_argument('--visualization_frequency', type=int, default=250, help="Frequency of visualization (in epoch)")
     parser.add_argument('--device', type=int, default=0, choices=([-1] + list(range(torch.cuda.device_count()))), help="GPU to use; -1 is CPU")
-    parser.add_argument('--weight_mask', type=float, default=100, help="Weight of the mask term")
+    parser.add_argument('--weight_mask', type=float, default=0, help="Weight of the mask term")
     parser.add_argument('--weight_ssim', type=float, default=3, help="Weight of the ssim term")
     parser.add_argument('--weight_normal', type=float, default=0.1, help="Weight of the normal term")
     parser.add_argument('--weight_shading', type=float, default=1, help="Weight of the shading term")
@@ -59,6 +59,7 @@ if __name__ == '__main__':
     parser.add_argument('--pos_gradient_boost', type=float, default=1, help="Nvdiffrast option")
     parser.add_argument('--ssaa', type=int, default=2, help="Super sampling rate")
     parser.add_argument('--uvmap', type=int, default=0, help="Whether to perform uvmap")
+    parser.add_argument('--vis_max_images', type=int, default=5, help="Max images per visualization step")
     parser.add_argument('--views_per_iter', type=int, default=1, help="Number of views used per iteration.")
     parser.add_argument('--refneus', type=int, default=0,help="Whether using refneus's mesh for initialization")
     parser.add_argument('--resolutionx', type=int, default=360,help="Resolution for environment feature map")
@@ -67,10 +68,12 @@ if __name__ == '__main__':
     parser.add_argument('--region',  type=int, default=1,help="1 for object, 2 for open scene")
     parser.add_argument('--difgeo',  type=int, default=0,help="If region is 2, whether use different geometry learner for foreground and background.")
     parser.add_argument('--wenvlearner',  type=int, default=1,help="Get environment map through environment learner or direct optimization.")
+    parser.add_argument('--geo_offset_scale', type=float, default=0.05, help="Scale factor for vertex offset output (tanh output * scale)")
+    parser.add_argument('--nor_offset_scale', type=float, default=0.1, help="Scale factor for normal offset output (tanh output * scale)")
     
     args = parser.parse_args()
     utils.seed_everything(0)
-    torch.autograd.set_detect_anomaly(True)
+    torch.autograd.set_detect_anomaly(False)
 
     device = torch.device('cpu')
     if torch.cuda.is_available() and args.device >= 0:
@@ -205,7 +208,7 @@ if __name__ == '__main__':
         #We find better initialization for envmap will lead to better performance.
         envir_map = 0.4 + 0.2 * torch.rand([args.resolutionx,args.resolutiony,3]).cuda()
         envir_map.requires_grad = True
-        optimizer_envmap = torch.optim.Adam([envir_map], lr=1e-3)
+        optimizer_envmap = torch.optim.Adam([envir_map], lr=5e-4)
         sche_envmap = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer_envmap, args.lr_frequency_sha, T_mult=int(args.lr_fre_sha_step), eta_min=1e-6)
     shader = tcnnshader(bound=hash_bound[-1],device= device,opt = args)
     optimizer_shader = torch.optim.Adam(shader.parameters(), lr=args.lr_shader)
@@ -232,6 +235,7 @@ if __name__ == '__main__':
         if args.test or args.uvmap:
             break    
         progress_bar.set_description(desc=f'epoch {epoch}') 
+        vis_done = False
         for data in train_loader:
             smooth_weight = torch.clamp(torch.tensor(epoch)/100.0,0.0,1.0)
             if args.mlpoff:
@@ -267,14 +271,12 @@ if __name__ == '__main__':
                 for i, mask in enumerate(masks):
                     loss_tmp += (MSE_function(data['images'][i][..., 3:], mask)).mean()
                 losses['mask'] = loss_tmp / args.views_per_iter
-                print(f"loss_mask:{losses['mask']}--iteration:{iteration}")
 
             if loss_weights['normal'] > 0:
                 if args.region==1 or args.difgeo==0: 
                     losses['normal'] = torch.abs(normal_offsets).mean()
                 else:
                     losses['normal'] = torch.abs(normal_offsets[indices[0]]).mean()
-                print(f"loss_normal:{losses['normal']}--iteration:{iteration}")
 
             if loss_weights['shading'] > 0:
                 shading_tmp = 0.0
@@ -303,12 +305,10 @@ if __name__ == '__main__':
                 losses['diffuse'] = diffuse_tmp / args.views_per_iter
                 losses['max1'] = max1_tmp / args.views_per_iter
                 psnr = psnr/ args.views_per_iter
-                print(f"loss_shading:{losses['shading']}--psnr:{psnr}--iteration:{iteration}")
             loss = torch.tensor(0., device=device)
             for k, v in losses.items():
                 loss += v * loss_weights[k]
             
-            print(f"loss_total:{loss}--iteration:{iteration}")
             writer.add_scalar(f'Train/PSNR', psnr.item(), iteration)
             writer.add_scalar(f'Train/loss_total', loss.item(), iteration)
             writer.add_scalar(f'Train/loss_mask', losses['mask'].item(), iteration)
@@ -336,30 +336,31 @@ if __name__ == '__main__':
                 
             progress_bar.set_postfix({'loss': loss.detach().cpu()})
             
-            # Visualizations
-            if (args.visualization_frequency > 0)  and (epoch == 1 or epoch % args.visualization_frequency == 0 or epoch == args.epoch):
+            # Visualizations - only on first iteration of the epoch
+            if (args.visualization_frequency > 0) and (epoch == 1 or epoch % args.visualization_frequency == 0 or epoch == args.epoch) and not vis_done:
+                vis_done = True
                 with torch.no_grad():
-                    for i, img in enumerate(imgs_full):
-                        shaded_path = (images_path /'train'/f'{epoch}') 
-                        shaded_path.mkdir(parents=True, exist_ok=True)
-                        shaded_image_train = torch.clamp(img, 0, 1)  
-                        viewindex = data['index'][i]
-                        plt.imsave(shaded_path / f'view{str(viewindex)}.png', shaded_image_train.cpu().numpy())
-                        
-                        shaded_path = (images_diffuse_path /'train'/f'{epoch}') 
-                        shaded_path.mkdir(parents=True, exist_ok=True)
-                        shaded_image_train = torch.clamp(imgs_diff[i], 0, 1)  
-                        plt.imsave(shaded_path / f'view{str(viewindex)}.png', shaded_image_train.cpu().numpy())
-                        
-                        shaded_path = (images_specular_path /'train'/f'{epoch}') 
-                        shaded_path.mkdir(parents=True, exist_ok=True)
-                        shaded_image_train = torch.clamp(imgs_spe[i], 0, 1)  
-                        plt.imsave(shaded_path / f'view{str(viewindex)}.png', shaded_image_train.cpu().numpy())
-                        
-                        normal_path = (normal_img_path/'train'/f'{epoch}')
-                        normal_path.mkdir(parents=True, exist_ok=True)
-                        normal_img = torch.clamp(normals[i],0,1)
-                        plt.imsave(normal_path / f'view{str(viewindex)}.png', normal_img.cpu().numpy())
+                    # Render first N train images with original filenames
+                    n_vis = min(args.vis_max_images, len(train_dataset.images))
+                    vis_indices = list(range(n_vis))
+                    vis_data = train_dataset.collate(vis_indices)
+                    if args.wenvlearner:
+                        vis_masks, vis_full, vis_diff, vis_spe, vis_normals, _ = renderer.render(
+                            train_dataset, vis_data, mesh, channels=['mask', 'position', 'normal'], shader=shader, envmap=None)
+                    else:
+                        vis_masks, vis_full, vis_diff, vis_spe, vis_normals, _ = renderer.render(
+                            train_dataset, vis_data, mesh, channels=['mask', 'position', 'normal'], shader=shader, envmap=envir_map)
+                    for i in range(n_vis):
+                        orig_name = os.path.splitext(os.path.basename(vis_data['file_path'][i]))[0]
+                        ep_dir = images_path / 'train' / f'{epoch}'
+                        ep_dir.mkdir(parents=True, exist_ok=True)
+                        plt.imsave(ep_dir / f'{orig_name}.png', torch.clamp(vis_full[i], 0, 1).cpu().numpy())
+                        (images_diffuse_path / 'train' / f'{epoch}').mkdir(parents=True, exist_ok=True)
+                        plt.imsave(images_diffuse_path / 'train' / f'{epoch}' / f'{orig_name}.png', torch.clamp(vis_diff[i], 0, 1).cpu().numpy())
+                        (images_specular_path / 'train' / f'{epoch}').mkdir(parents=True, exist_ok=True)
+                        plt.imsave(images_specular_path / 'train' / f'{epoch}' / f'{orig_name}.png', torch.clamp(vis_spe[i], 0, 1).cpu().numpy())
+                        (normal_img_path / 'train' / f'{epoch}').mkdir(parents=True, exist_ok=True)
+                        plt.imsave(normal_img_path / 'train' / f'{epoch}' / f'{orig_name}.png', torch.clamp(vis_normals[i], 0, 1).cpu().numpy())
                         
                             
                 
@@ -519,15 +520,16 @@ if __name__ == '__main__':
                 
     
                 
-                plt.imsave(shaded_path / f'view{str(view_count)}.png', shaded_image.cpu().numpy())
-                plt.imsave(shaded_path_diff/ f'view{str(view_count)}.png', shaded_image_diff.cpu().numpy())
-                plt.imsave(shaded_path_spe/ f'view{str(view_count)}.png', shaded_image_spe.cpu().numpy())
-                plt.imsave(shaded_path_envmapour / f'view{str(view_count)}.png', shaded_image_envmapour.cpu().numpy())
+                orig_name = os.path.splitext(os.path.basename(data['file_path'][0]))[0]
+                plt.imsave(shaded_path / f'{orig_name}.png', shaded_image.cpu().numpy())
+                plt.imsave(shaded_path_diff/ f'{orig_name}.png', shaded_image_diff.cpu().numpy())
+                plt.imsave(shaded_path_spe/ f'{orig_name}.png', shaded_image_spe.cpu().numpy())
+                plt.imsave(shaded_path_envmapour / f'{orig_name}.png', shaded_image_envmapour.cpu().numpy())
                 
                 normal_path = (normal_img_path/'test')
                 normal_path.mkdir(parents=True, exist_ok=True)
                 normal_img = torch.clamp(normals[0],0,1)
-                plt.imsave(normal_path / f'view{str(view_count)}.png', normal_img.cpu().numpy())
+                plt.imsave(normal_path / f'{orig_name}.png', normal_img.cpu().numpy())
                 
                 imgs.append(shaded_image.cpu().numpy())
                 dif.append(shaded_image_diff.cpu().numpy())

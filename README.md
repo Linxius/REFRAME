@@ -24,43 +24,35 @@ Our project page can be seen at https://xdimlab.github.io/REFRAME/.
 
 
 ## :house: Installation
-A suitable [conda](https://www.anaconda.com/) environment named `REFRAME` can be created and activated with:
+A suitable [conda](https://www.anaconda.com/) / [mamba](https://mamba.readthedocs.io/) environment named `REFRAME` can be created and activated with:
 ```
 # clone this repository
 git clone https://github.com/MARVELOUSJI/REFRAME
 
-# create new anaconda environment and activate it
-conda create -n REFRAME python=3.8
-conda activate REFRAME
+# create new environment and activate it (mamba recommended for faster installs)
+mamba create -n REFRAME python=3.12
+mamba activate REFRAME
 
-#install pytorch 
-conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch
+# install pytorch with CUDA 12.1
+mamba install pytorch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 pytorch-cuda=12.1 -c pytorch -c nvidia
 
-#install nvdiffrast
+# install build tools
+pip install setuptools wheel ninja
+
+# install nvdiffrast
 git clone https://github.com/NVlabs/nvdiffrast.git
-cd nvdiffrast
-python -m pip install .
+pip install ./nvdiffrast --no-build-isolation
 
-#install tiny-cuda-nn
-cd ../
-sudo apt-get install build-essential git
-
-#export cuda path (change the cuda version of your own)
-export PATH="/usr/local/cuda-11.3/bin:$PATH"
-export LD_LIBRARY_PATH="/usr/local/cuda-11.3/lib64:$LD_LIBRARY_PATH"
-
+# install tiny-cuda-nn
 git clone --recursive https://github.com/nvlabs/tiny-cuda-nn
-cd tiny-cuda-nn
-cmake . -B build
-cmake --build build --config RelWithDebInfo -j
-cd bindings/torch
-python setup.py install
+pip install ./tiny-cuda-nn/bindings/torch --no-build-isolation
 
-#install the rest package
-cd ../../../REFRAME
+# install the rest packages
 pip install -r requirements.txt
 ```
 For more details on tiny-cuda-nn and nvdiffrast, you can visit [tiny-cuda-nn](https://github.com/nvlabs/tiny-cuda-nn#pytorch-extension) and [nvdiffrast](https://github.com/NVlabs/nvdiffrast).
+
+**Note:** `setuptools<71` is required for tiny-cuda-nn build (newer versions removed `pkg_resources`). `numpy<2` is required for PyTorch 2.2.x compatibility.
 
 ## :framed_picture: Initialization (Dataset and Initial mesh)
 
